@@ -1,0 +1,56 @@
+[project]
+name = "pi-agent-core"
+version = "0.1.0"
+description = "Stateful agent with tool execution, event streaming, steering/follow-up message queuing, and proxy transport"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.0",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.24,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.9",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff — linter & formatter
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle          — "Readability counts"
+    "F",         # pyflakes             — "Errors should never pass silently"
+    "I",         # isort                — "There should be one obvious way"
+    "UP",        # pyupgrade            — "Beautiful is better than ugly"
+    "B",         # flake8-bugbear       — "Errors should never pass silently"
+    "SIM",       # flake8-simplify      — "Simple is better than complex"
+    "RUF",       # ruff-specific        — miscellaneous quality
+]
+ignore = [
+    "B008",      # function-call-in-default-argument — Pydantic Field(default_factory=...)
+    "UP007",     # non-pep604-annotation — Union[X, Y] used for Pydantic compat in older models
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pi_agent_core"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # re-exports
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+pythonpath = ["tests"]
+asyncio_mode = "strict"
