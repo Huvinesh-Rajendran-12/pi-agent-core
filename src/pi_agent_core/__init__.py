@@ -3,6 +3,8 @@ pi-agent-core: Stateful agent with tool execution, event streaming,
 steering/follow-up message queuing, and proxy transport.
 """
 
+import contextlib
+
 # Core Agent
 from .agent import Agent, AgentOptions
 
@@ -11,6 +13,10 @@ from .agent_loop import agent_loop, agent_loop_continue
 
 # Proxy utilities
 from .proxy import ProxyAsyncStream, ProxyStreamOptions, stream_proxy
+
+# Anthropic adapter (optional — requires `pip install pi-agent-core[anthropic]`)
+with contextlib.suppress(ImportError):
+    from .anthropic import stream_anthropic
 
 # Types
 from .types import (
@@ -68,9 +74,7 @@ from .types import (
 )
 
 __all__ = [
-    # Agent
     "Agent",
-    # Types
     "AgentContext",
     "AgentEndEvent",
     "AgentEvent",
@@ -125,9 +129,8 @@ __all__ = [
     "Usage",
     "UsageCost",
     "UserMessage",
-    # Loop
     "agent_loop",
     "agent_loop_continue",
-    # Proxy
+    "stream_anthropic",
     "stream_proxy",
 ]

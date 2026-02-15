@@ -22,6 +22,7 @@ from .types import (
     SimpleStreamOptions,
     StreamDoneEvent,
     StreamErrorEvent,
+    StreamResult,
     StreamStartEvent,
     StreamTextDeltaEvent,
     StreamTextEndEvent,
@@ -47,83 +48,50 @@ class ProxyStreamOptions(SimpleStreamOptions):
     proxy_url: str
 
 
-class ProxyAsyncStream:
-    """
-    Async stream that collects events as they arrive from the proxy SSE stream,
-    supporting both async iteration and result().
-    """
-
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[AssistantMessageEvent | None] = asyncio.Queue()
-        self._final_message: AssistantMessage | None = None
-        self._done = asyncio.Event()
-        self._task: asyncio.Task | None = None
-
-    def push(self, event: AssistantMessageEvent) -> None:
-        self._queue.put_nowait(event)
-
-    def set_result(self, message: AssistantMessage) -> None:
-        self._final_message = message
-        self._done.set()
-
-    def end(self) -> None:
-        self._queue.put_nowait(None)  # sentinel
-
-    def __aiter__(self) -> ProxyAsyncStream:
-        return self
-
-    async def __anext__(self) -> AssistantMessageEvent:
-        item = await self._queue.get()
-        if item is None:
-            raise StopAsyncIteration
-        return item
-
-    async def result(self) -> AssistantMessage:
-        await self._done.wait()
-        if self._final_message is None:
-            raise RuntimeError("No result available")
-        return self._final_message
+# Backward-compat export name.
+ProxyAsyncStream = StreamResult
 
 
 async def stream_proxy(
     model: Model,
     context: AgentContext,
     options: ProxyStreamOptions,
-) -> ProxyAsyncStream:
+) -> StreamResult:
     """
     Stream function that proxies through a server instead of calling LLM providers directly.
 
-    The server strips the partial field from delta events to reduce bandwidth.
-    We reconstruct the partial message client-side.
-
-    Use this as the `stream_fn` option when creating an Agent that needs to go through a proxy.
-
-    Example:
-        agent = Agent(AgentOptions(
-            stream_fn=lambda model, context, options: stream_proxy(
-                model, context,
-                ProxyStreamOptions(
-                    **options.model_dump(),
-                    auth_token="...",
-                    proxy_url="https://genai.example.com",
-                ),
-            ),
-        ))
+    Returns a procedural stream result:
+      - events: async iterator of AssistantMessageEvent
+      - result: async callable returning the final AssistantMessage
     """
-    stream = ProxyAsyncStream()
+    queue: asyncio.Queue[AssistantMessageEvent | None] = asyncio.Queue()
+    done = asyncio.Event()
+    state: dict[str, Any] = {"final": None, "task": None}
 
-    # Initialize the partial message that we'll build up from events
     partial = AssistantMessage(
         api=model.api,
         provider=model.provider,
         model=model.id,
     )
 
+    async def events_iter():
+        while True:
+            item = await queue.get()
+            if item is None:
+                return
+            yield item
+
+    async def result() -> AssistantMessage:
+        await done.wait()
+        final = state["final"]
+        if final is None:
+            raise RuntimeError("No result available")
+        return final
+
     async def _run() -> None:
         nonlocal partial
 
         try:
-            # Build request body
             body = {
                 "model": model.model_dump(),
                 "context": {
@@ -189,32 +157,33 @@ async def stream_proxy(
                                 proxy_event = json.loads(data)
                                 event = _process_proxy_event(proxy_event, partial)
                                 if event is not None:
-                                    stream.push(event)
+                                    queue.put_nowait(event)
 
             if options.cancel_event and options.cancel_event.is_set():
                 raise RuntimeError("Request aborted by user")
 
-            stream.set_result(partial)
-            stream.end()
+            state["final"] = partial
 
         except Exception as error:
             error_message = str(error)
             reason = "aborted" if (options.cancel_event and options.cancel_event.is_set()) else "error"
             partial.stop_reason = reason
             partial.error_message = error_message
-            stream.push(
+            queue.put_nowait(
                 StreamErrorEvent(
                     reason=reason,
                     error=partial,
                 )
             )
-            stream.set_result(partial)
-            stream.end()
+            state["final"] = partial
 
-    # Start the streaming task; store reference to prevent GC
-    stream._task = asyncio.create_task(_run())
+        finally:
+            done.set()
+            queue.put_nowait(None)
 
-    return stream
+    state["task"] = asyncio.create_task(_run())
+
+    return {"events": events_iter(), "result": result}
 
 
 def _process_proxy_event(

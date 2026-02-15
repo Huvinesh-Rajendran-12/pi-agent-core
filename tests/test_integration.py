@@ -14,7 +14,6 @@ import asyncio
 import os
 
 import pytest
-from anthropic_adapter import stream_anthropic
 
 from pi_agent_core import (
     Agent,
@@ -26,6 +25,7 @@ from pi_agent_core import (
     TextContent,
     UserMessage,
 )
+from pi_agent_core.anthropic import stream_anthropic
 
 # ---------------------------------------------------------------------------
 # Skip all tests when no API key is available
