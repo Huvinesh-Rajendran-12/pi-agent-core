@@ -1,6 +1,6 @@
 [project]
 name = "pi-agent-core"
-version = "0.1.0"
+version = "0.1.1"
 description = "Stateful agent with tool execution, event streaming, steering/follow-up message queuing, and proxy transport"
 readme = "README.md"
 requires-python = ">=3.11"
