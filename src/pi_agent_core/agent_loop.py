@@ -263,10 +263,16 @@ async def _stream_assistant_response(
     if inspect.isawaitable(response):
         response = await response
 
+    if not isinstance(response, dict) or "events" not in response or "result" not in response:
+        raise TypeError("StreamFn must return {'events': AsyncIterator, 'result': async callable}")
+
+    events = response["events"]
+    get_result = response["result"]
+
     partial_message: AssistantMessage | None = None
     added_partial = False
 
-    async for event in response:
+    async for event in events:
         event_type = event.type
 
         if event_type == "start":
@@ -295,7 +301,7 @@ async def _stream_assistant_response(
                 )
 
         elif event_type in ("done", "error"):
-            final_message = await response.result()
+            final_message = await get_result()
             if added_partial:
                 context.messages[-1] = final_message
             else:
@@ -306,7 +312,7 @@ async def _stream_assistant_response(
             return
 
     # Fallback: get result if loop ended without done/error
-    final_message = await response.result()
+    final_message = await get_result()
     if added_partial:
         context.messages[-1] = final_message
     else:

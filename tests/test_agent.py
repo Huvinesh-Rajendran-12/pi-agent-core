@@ -1,7 +1,7 @@
 """Tests for Agent class."""
 
 import pytest
-from conftest import MockStreamResult
+from conftest import make_mock_stream_result
 
 from pi_agent_core import (
     Agent,
@@ -24,7 +24,7 @@ def make_stream_fn(text: str = "Hello!", tool_calls: list[ToolCall] | None = Non
     """Create a mock stream function that returns predefined text."""
 
     async def stream_fn(model, context, options):
-        return MockStreamResult(text=text, tool_calls=tool_calls)
+        return make_mock_stream_result(text=text, tool_calls=tool_calls)
 
     return stream_fn
 
@@ -214,9 +214,9 @@ class TestAgentToolExecution:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return MockStreamResult(text="Let me search.", tool_calls=[tool_call])
+                return make_mock_stream_result(text="Let me search.", tool_calls=[tool_call])
             else:
-                return MockStreamResult(text="Found results!")
+                return make_mock_stream_result(text="Found results!")
 
         agent = Agent(
             AgentOptions(

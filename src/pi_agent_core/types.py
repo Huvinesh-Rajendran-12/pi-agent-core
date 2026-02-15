@@ -8,12 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
-from typing import (
-    Any,
-    Literal,
-    Protocol,
-)
+from collections.abc import AsyncIterator, Awaitable, Callable
+from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -437,16 +433,14 @@ AssistantMessageEvent = (
 # ---------------------------------------------------------------------------
 
 # StreamFn: an async callable that takes (model, context, config) and returns
-# an async iterator of AssistantMessageEvent, plus a result() method.
-# Users provide their own LLM streaming implementation.
+# a procedural stream response:
+#   - events: async iterator of AssistantMessageEvent
+#   - result: async callable returning the final AssistantMessage
 
 
-class StreamResult(Protocol):
-    """Protocol for the result of a stream function."""
-
-    def __aiter__(self) -> StreamResult: ...
-    async def __anext__(self) -> AssistantMessageEvent: ...
-    async def result(self) -> AssistantMessage: ...
+class StreamResult(TypedDict):
+    events: AsyncIterator[AssistantMessageEvent]
+    result: Callable[[], Awaitable[AssistantMessage]]
 
 
 StreamFn = Callable[..., Awaitable[StreamResult] | StreamResult]

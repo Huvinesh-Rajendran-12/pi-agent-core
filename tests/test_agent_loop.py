@@ -1,7 +1,7 @@
 """Tests for agent_loop and agent_loop_continue."""
 
 import pytest
-from conftest import MockStreamResult
+from conftest import make_mock_stream_result
 
 from pi_agent_core import (
     AgentContext,
@@ -37,7 +37,7 @@ def make_config(model: Model | None = None) -> AgentLoopConfig:
 
 def make_stream_fn(text: str = "Hello!", tool_calls: list[ToolCall] | None = None):
     async def stream_fn(model, context, options):
-        return MockStreamResult(text=text, tool_calls=tool_calls)
+        return make_mock_stream_result(text=text, tool_calls=tool_calls)
 
     return stream_fn
 
@@ -114,8 +114,8 @@ class TestAgentLoop:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return MockStreamResult(text="Using tool", tool_calls=[tool_call])
-            return MockStreamResult(text="Done")
+                return make_mock_stream_result(text="Using tool", tool_calls=[tool_call])
+            return make_mock_stream_result(text="Done")
 
         config = make_config()
         context = AgentContext(system_prompt="", messages=[], tools=[tool])
@@ -222,8 +222,8 @@ class TestSteeringMessages:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return MockStreamResult(text="Using tools", tool_calls=tool_calls)
-            return MockStreamResult(text="Done after steering")
+                return make_mock_stream_result(text="Using tools", tool_calls=tool_calls)
+            return make_mock_stream_result(text="Done after steering")
 
         config = AgentLoopConfig(
             model=make_model(),
