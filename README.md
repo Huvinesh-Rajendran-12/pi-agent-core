@@ -8,13 +8,19 @@ A stateful LLM agent framework for Python with tool execution, event streaming, 
 uv add pi-agent-core
 ```
 
+Optional Anthropic adapter:
+
+```bash
+uv add "pi-agent-core[anthropic]"
+```
+
 ## Overview
 
-pi-agent-core provides a minimal, LLM-agnostic agent loop that handles the orchestration between your application and any LLM provider. You bring your own streaming function — the library handles state management, tool execution, event dispatch, mid-turn steering, and follow-up queuing.
+pi-agent-core provides a minimal, LLM-agnostic agent loop that handles orchestration between your application and any LLM provider. You bring your own streaming function — the library handles state management, tool execution, event dispatch, mid-turn steering, and follow-up queuing.
 
 ### Key Features
 
-- **LLM-agnostic** — works with any provider via the `StreamFn` protocol
+- **LLM-agnostic** — works with any provider via `StreamFn`
 - **Real-time event streaming** — two-level event system for agent lifecycle and LLM streaming primitives
 - **Tool execution** — define tools with JSON Schema parameters and async execute functions
 - **Steering & follow-up queues** — interrupt mid-turn or queue messages for after completion
@@ -93,16 +99,22 @@ stream_proxy()            ← Built-in SSE proxy client as a StreamFn
 
 | Module | Responsibility |
 |---|---|
-| `types.py` | All Pydantic models: content blocks, messages, events, tools, config, state, and the `StreamResult` protocol |
+| `types.py` | All Pydantic models: content blocks, messages, events, tools, config, state, and `StreamResult` |
 | `agent_loop.py` | `agent_loop()` and `agent_loop_continue()` async generators — streaming, tool execution, steering, follow-ups |
 | `agent.py` | `Agent` class wrapping the loop with state management, event subscriptions, abort/reset, and queue management |
 | `proxy.py` | `stream_proxy()` SSE client using httpx — reconstructs partial messages from server-stripped delta events |
+| `anthropic.py` | Optional Anthropic Messages adapter (`stream_anthropic`) |
 
 ## Implementing a StreamFn
 
-The library is LLM-agnostic. You provide a `stream_fn(model, context, options)` that returns a `StreamResult` — an async iterator of `AssistantMessageEvent` objects with an `async result()` method.
+The library is LLM-agnostic. You provide a `stream_fn(model, context, options)` that returns a **procedural** `StreamResult` dict:
+
+- `events`: `AsyncIterator[AssistantMessageEvent]`
+- `result`: `Callable[[], Awaitable[AssistantMessage]]`
 
 ```python
+from collections.abc import AsyncIterator
+
 from pi_agent_core import (
     AssistantMessage,
     AssistantMessageEvent,
@@ -119,31 +131,31 @@ from pi_agent_core import (
 )
 
 
-class MyStream:
-    """Implements the StreamResult protocol."""
-
-    def __init__(self):
-        self._events = []
-        self._final = None
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self) -> AssistantMessageEvent:
-        ...  # yield events from your LLM provider
-
-    async def result(self) -> AssistantMessage:
-        return self._final
-
-
 async def my_stream_fn(
     model: Model,
     context: AgentContext,
     options: SimpleStreamOptions,
 ) -> StreamResult:
-    stream = MyStream()
-    # Start your LLM call, push events into the stream
-    return stream
+    partial = AssistantMessage(api=model.api, provider=model.provider, model=model.id)
+
+    async def events_iter() -> AsyncIterator[AssistantMessageEvent]:
+        # Example only — replace with provider events
+        yield StreamStartEvent(partial=partial)
+
+        partial.content = [TextContent(text="")]
+        yield StreamTextStartEvent(content_index=0, partial=partial)
+
+        partial.content[0].text += "Hello!"
+        yield StreamTextDeltaEvent(content_index=0, delta="Hello!", partial=partial)
+        yield StreamTextEndEvent(content_index=0, content="Hello!", partial=partial)
+
+        partial.stop_reason = "stop"
+        yield StreamDoneEvent(reason="stop", message=partial)
+
+    async def result() -> AssistantMessage:
+        return partial
+
+    return {"events": events_iter(), "result": result}
 ```
 
 ## Event System
@@ -176,7 +188,21 @@ agent.follow_up(UserMessage(content=[TextContent(text="Now summarize the results
 
 Both support `"one-at-a-time"` (default) or `"all"` dequeue modes.
 
-## Proxy Transport
+## Built-in Adapters
+
+### Anthropic
+
+```python
+from pi_agent_core.anthropic import stream_anthropic
+
+agent = Agent(AgentOptions(
+    stream_fn=stream_anthropic,
+))
+```
+
+Uses `OPENROUTER_API_KEY` or `ANTHROPIC_API_KEY` automatically. You can also set `ANTHROPIC_BASE_URL`.
+
+### Proxy Transport
 
 For apps that route LLM calls through a backend server:
 
@@ -185,7 +211,8 @@ from pi_agent_core import Agent, AgentOptions, stream_proxy, ProxyStreamOptions
 
 agent = Agent(AgentOptions(
     stream_fn=lambda model, context, options: stream_proxy(
-        model, context,
+        model,
+        context,
         ProxyStreamOptions(
             **options.model_dump(),
             auth_token="your-auth-token",
