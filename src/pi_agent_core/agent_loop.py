@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 from .types import (
@@ -111,14 +111,13 @@ async def _run_loop(
 ) -> AsyncGenerator[AgentEvent, None]:
     """Main loop logic shared by agent_loop and agent_loop_continue."""
     first_turn = True
-    # Check for steering messages at start
+    # Check for steering messages at start (matches TS runLoop behavior)
     pending_messages: list[Message] = []
     if config.get_steering_messages:
         pending_messages = await config.get_steering_messages()
 
     while True:
         has_more_tool_calls = True
-        steering_after_tools: list[Message] | None = None
 
         while has_more_tool_calls or len(pending_messages) > 0:
             if not first_turn:
@@ -159,23 +158,27 @@ async def _run_loop(
             has_more_tool_calls = len(tool_calls) > 0
 
             tool_results: list[ToolResultMessage] = []
+            steering_after_tools: list[Message] | None = None
             if has_more_tool_calls:
-                exec_result = await _execute_tool_calls(
+                async for tool_result, events, steering in _execute_tool_calls(
                     current_context.tools,
                     assistant_msg,
                     cancel_event,
                     config.get_steering_messages,
-                )
-                tool_results = exec_result["tool_results"]
-                steering_after_tools = exec_result.get("steering_messages")
+                ):
+                    # Yield events immediately so subscribers can react (e.g., steering)
+                    for evt in events:
+                        yield evt
 
-                for result_msg in tool_results:
-                    current_context.messages.append(result_msg)
-                    new_messages.append(result_msg)
+                    # Yield control to event loop so steering can be processed
+                    await asyncio.sleep(0)
 
-                # Yield tool execution events
-                for evt in exec_result["events"]:
-                    yield evt
+                    tool_results.append(tool_result)
+                    current_context.messages.append(tool_result)
+                    new_messages.append(tool_result)
+
+                    if steering and steering_after_tools is None:
+                        steering_after_tools = steering
 
             yield TurnEndEvent(message=assistant_msg, tool_results=tool_results)
 
@@ -325,27 +328,42 @@ async def _execute_tool_calls(
     assistant_message: AssistantMessage,
     cancel_event: asyncio.Event | None,
     get_steering_messages: Any | None,
-) -> dict[str, Any]:
-    """Execute tool calls from an assistant message."""
+) -> AsyncIterator[tuple[ToolResultMessage, list[AgentEvent], list[Message] | None]]:
+    """
+    Execute tool calls from an assistant message.
+    Yields after each tool: (tool_result, events, steering_messages).
+    Steering_messages is non-None if the tool execution should stop early.
+    """
     tool_calls = [c for c in assistant_message.content if isinstance(c, ToolCall)]
-    results: list[ToolResultMessage] = []
-    events: list[AgentEvent] = []
-    steering_messages: list[Message] | None = None
 
     tools_by_name: dict[str, AgentTool] = {}
     for t in tools:
         tools_by_name.setdefault(t.name, t)
 
     for index, tool_call in enumerate(tool_calls):
+        # Check steering BEFORE executing each tool (after the first).
+        # In TS, steering is checked after each tool via push-based streams where
+        # subscribers react synchronously. In Python's async generator model, events
+        # are yielded to the caller between iterations, so checking before the next
+        # tool is the equivalent timing — subscribers have already seen previous events.
+        if index > 0 and get_steering_messages:
+            steering = await get_steering_messages()
+            if steering:
+                # Skip this and all remaining tool calls
+                for skipped in tool_calls[index:]:
+                    skip_result = _skip_tool_call(skipped)
+                    yield skip_result["tool_result"], skip_result["events"], steering
+                return
+
         tool = tools_by_name.get(tool_call.name)
 
-        events.append(
+        events: list[AgentEvent] = [
             ToolExecutionStartEvent(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
                 args=tool_call.arguments,
             )
-        )
+        ]
 
         result: AgentToolResult
         is_error = False
@@ -405,27 +423,10 @@ async def _execute_tool_calls(
             is_error=is_error,
         )
 
-        results.append(tool_result_message)
         events.append(MessageStartEvent(message=tool_result_message))
         events.append(MessageEndEvent(message=tool_result_message))
 
-        # Check for steering messages - skip remaining tools if user interrupted
-        if get_steering_messages:
-            steering = await get_steering_messages()
-            if steering:
-                steering_messages = steering
-                remaining_calls = tool_calls[index + 1 :]
-                for skipped in remaining_calls:
-                    skip_result = _skip_tool_call(skipped)
-                    results.append(skip_result["tool_result"])
-                    events.extend(skip_result["events"])
-                break
-
-    return {
-        "tool_results": results,
-        "steering_messages": steering_messages,
-        "events": events,
-    }
+        yield tool_result_message, events, None
 
 
 def _validate_tool_arguments(tool_call: ToolCall) -> dict[str, Any]:

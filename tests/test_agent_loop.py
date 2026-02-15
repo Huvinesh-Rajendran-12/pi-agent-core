@@ -194,7 +194,9 @@ class TestSteeringMessages:
             nonlocal steering_call_count
             steering_call_count += 1
             if steering_call_count == 2:
-                # Return steering on the second call (after first tool execution)
+                # Return steering on the second call (before second tool execution).
+                # Call 1: initial check at start of _run_loop (returns []).
+                # Call 2: before tool 2 in _execute_tool_calls (returns steering).
                 return [UserMessage(content=[TextContent(text="Stop!")])]
             return []
 
