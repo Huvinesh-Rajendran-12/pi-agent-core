@@ -51,6 +51,12 @@ proxy.py (stream_proxy)   ← SSE proxy client as a StreamFn implementation
 
 Uses `asyncio.Event` (not `AbortSignal` from TS). The Agent creates a cancel event per run; `abort()` sets it. The loop and tools check it cooperatively.
 
+### Steering Check Timing (TS vs Python)
+
+The TypeScript original checks steering **after** each tool completes via push-based streams (`stream.push()` notifies subscribers synchronously before the steering check runs). Python uses async generators where events are batched and yielded to the caller between iterations. Subscribers only see events **after** `_run_loop` yields them, which happens between `_execute_tool_calls` iterations — not inside it.
+
+Therefore, the Python equivalent of TS's "check after tool N" is "check before tool N+1" (`if index > 0`). This ensures subscribers have processed the previous tool's events before steering is polled. Do **not** move the steering check to after tool execution inside `_execute_tool_calls` — it will always miss steering because events haven't reached subscribers yet.
+
 ## Style Guide
 
 Enforced by **ruff** (`uv run ruff check .` / `uv run ruff format .`). Each rule maps back to a Zen principle:
