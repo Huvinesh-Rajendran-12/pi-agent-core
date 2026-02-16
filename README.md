@@ -234,7 +234,7 @@ uv run ruff format .        # Format
 
 ## Credits
 
-This is a Python port of the TypeScript [`@mariozechner/pi-agent-core`](https://github.com/nichochar/pi-mono) package from the **pi-mono** repository. The original TypeScript implementation by [Mario Zechner](https://github.com/mariozechner) provides the architecture, abstractions, and design that this library faithfully mirrors.
+This is a Python port of the TypeScript [`@mariozechner/pi-agent-core`](https://github.com/badlogic/pi-mono) package from the **pi-mono** repository. The original TypeScript implementation by [Mario Zechner](https://github.com/mariozechner) provides the architecture, abstractions, and design that this library faithfully mirrors.
 
 ## License
 
